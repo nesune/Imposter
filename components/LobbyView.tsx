@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GameSettings, GameMode, User } from '../types';
 import { Users, UserMinus, ShieldQuestion, Play, UserCircle2, Globe, Laptop, Smartphone, Copy, Check, Timer, User as UserIcon, Plus, Minus, RefreshCw } from 'lucide-react';
+import { createRoom, generateUniqueRoomCode, getRoomByCode } from '../services/supabaseService';
 
 interface LobbyViewProps {
   onStart: (settings: GameSettings) => void;
@@ -19,6 +20,8 @@ const LobbyView: React.FC<LobbyViewProps> = ({ onStart, currentUser, onOpenProfi
   const [roomCode, setRoomCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [roomCreated, setRoomCreated] = useState(false);
+  const [creatingRoom, setCreatingRoom] = useState(false);
 
   useEffect(() => {
     if (currentUser && names[0] === '') {
@@ -32,11 +35,69 @@ const LobbyView: React.FC<LobbyViewProps> = ({ onStart, currentUser, onOpenProfi
 
   useEffect(() => {
     if (mode === GameMode.ONLINE && !isJoining && !roomCode) {
-      // Generate 4-digit code (will be replaced with unique code from Supabase in App.tsx)
+      // Generate 4-digit code (will be replaced with unique code from Supabase)
       const code = Math.floor(1000 + Math.random() * 9000).toString();
       setRoomCode(code);
+      setRoomCreated(false);
     }
   }, [mode, isJoining]);
+
+  // Create room automatically when in HOST OPS mode
+  useEffect(() => {
+    const createRoomIfNeeded = async () => {
+      if (mode === GameMode.ONLINE && !isJoining && !roomCreated && roomCode && !creatingRoom) {
+        setCreatingRoom(true);
+        try {
+          // Generate unique room code
+          let finalCode = roomCode;
+          const exists = await getRoomByCode(finalCode);
+          if (exists) {
+            finalCode = await generateUniqueRoomCode();
+            setRoomCode(finalCode);
+          } else {
+            // Normalize to uppercase
+            finalCode = finalCode.toUpperCase().padStart(4, '0').slice(0, 4);
+            setRoomCode(finalCode);
+          }
+
+          // Create room with minimal settings (will be updated when game starts)
+          // We create an empty room - the host will be added when they click "CHOOSE THEME"
+          const playerName = names[0] || currentUser?.username || 'GUEST AGENT';
+          const tempPlayerId = `temp_host_${Date.now()}`;
+          
+          const roomId = await createRoom(
+            finalCode,
+            tempPlayerId,
+            playerName,
+            {
+              playerCount: 1,
+              imposterCount: imposterCount,
+              playerNames: [playerName],
+              mode: GameMode.ONLINE,
+              roundTime: roundTime
+            }
+          );
+          
+          // Don't add player to room_players table yet - that happens in App.tsx
+
+          if (roomId) {
+            setRoomCreated(true);
+            console.log('Room created in lobby with code:', finalCode);
+          } else {
+            console.error('Failed to create room in lobby');
+          }
+        } catch (error) {
+          console.error('Error creating room in lobby:', error);
+        } finally {
+          setCreatingRoom(false);
+        }
+      }
+    };
+
+    // Small delay to avoid creating room too quickly
+    const timer = setTimeout(createRoomIfNeeded, 500);
+    return () => clearTimeout(timer);
+  }, [mode, isJoining, roomCode, roomCreated, creatingRoom, names, currentUser, imposterCount, roundTime]);
 
   useEffect(() => {
     if (mode === GameMode.LOCAL) {
@@ -78,10 +139,11 @@ const LobbyView: React.FC<LobbyViewProps> = ({ onStart, currentUser, onOpenProfi
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const refreshRoomCode = () => {
+  const refreshRoomCode = async () => {
     // Generate a new 4-digit room code
-    const newCode = Math.floor(1000 + Math.random() * 9000).toString();
+    const newCode = await generateUniqueRoomCode();
     setRoomCode(newCode);
+    setRoomCreated(false); // Reset so new room will be created
   };
 
   const Counter = ({ value, onAdd, onSub, label, icon: Icon, color, suffix = "" }: any) => (
@@ -190,24 +252,33 @@ const LobbyView: React.FC<LobbyViewProps> = ({ onStart, currentUser, onOpenProfi
                     className="text-4xl font-black text-center text-indigo-600 outline-none w-full bg-slate-50 rounded-[2rem] py-4 tracking-[0.3em] placeholder:text-slate-200"
                   />
                 ) : (
-                  <div className="flex items-center justify-center gap-4">
-                    <span className="text-5xl font-black tracking-[0.2em] text-indigo-600">{roomCode}</span>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={refreshRoomCode} 
-                        className="p-4 bg-slate-50 hover:bg-amber-50 rounded-2xl text-slate-400 hover:text-amber-600 transition-all"
-                        title="Generate new code"
-                      >
-                        <RefreshCw size={28} />
-                      </button>
-                      <button 
-                        onClick={copyLink} 
-                        className="p-4 bg-slate-50 hover:bg-indigo-50 rounded-2xl text-slate-400 hover:text-indigo-600 transition-all"
-                        title="Copy room link"
-                      >
-                        {copied ? <Check size={28} className="text-green-500" /> : <Copy size={28} />}
-                      </button>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-center gap-4">
+                      <span className="text-5xl font-black tracking-[0.2em] text-indigo-600">{roomCode}</span>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={refreshRoomCode} 
+                          className="p-4 bg-slate-50 hover:bg-amber-50 rounded-2xl text-slate-400 hover:text-amber-600 transition-all"
+                          title="Generate new code"
+                          disabled={creatingRoom}
+                        >
+                          <RefreshCw size={28} className={creatingRoom ? 'animate-spin' : ''} />
+                        </button>
+                        <button 
+                          onClick={copyLink} 
+                          className="p-4 bg-slate-50 hover:bg-indigo-50 rounded-2xl text-slate-400 hover:text-indigo-600 transition-all"
+                          title="Copy room link"
+                        >
+                          {copied ? <Check size={28} className="text-green-500" /> : <Copy size={28} />}
+                        </button>
+                      </div>
                     </div>
+                    {creatingRoom && (
+                      <p className="text-xs text-amber-600 font-bold animate-pulse">Creating room...</p>
+                    )}
+                    {roomCreated && !creatingRoom && (
+                      <p className="text-xs text-green-600 font-bold">✓ Room active - Players can join!</p>
+                    )}
                   </div>
                 )}
               </div>

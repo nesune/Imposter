@@ -186,37 +186,41 @@ const App: React.FC = () => {
     setMyPlayerId(playerId);
 
     if (s.isHost) {
-      // Host: Create room with unique code
+      // Host: Use existing room or create new one
       let roomCode = s.roomCode;
       if (!roomCode) {
         roomCode = await generateUniqueRoomCode();
       } else {
         // Normalize to uppercase
         roomCode = roomCode.toUpperCase().padStart(4, '0').slice(0, 4);
-        // Check if provided code is available, if not generate unique one
-        const exists = await supabase
-          .from('rooms')
-          .select('id')
-          .eq('code', roomCode)
-          .single()
-          .then(({ data, error }) => {
-            if (error && error.code === 'PGRST116') return false; // Room not found = available
-            return !!data;
-          });
-        
-        if (exists) {
-          console.log('Room code already exists, generating new one');
-          roomCode = await generateUniqueRoomCode();
-        }
       }
       setCurrentRoomCode(roomCode);
-      console.log('Creating room with code:', roomCode);
       
-      const roomId = await createRoom(roomCode, playerId, playerName, s);
-      if (!roomId) {
-        alert('Failed to create room. Please check your Supabase connection and try again.');
-        console.error('Room creation failed. Check browser console for details.');
-        return;
+      // Check if room already exists (created in lobby)
+      let existingRoom = await getRoomByCode(roomCode);
+      let roomId: string | null;
+      
+      if (existingRoom) {
+        // Use existing room
+        console.log('Using existing room with code:', roomCode);
+        roomId = existingRoom.id;
+        
+        // Update room settings if needed
+        await updateRoom(roomId, {
+          settings: {
+            imposter_count: s.imposterCount,
+            round_time: s.roundTime,
+          },
+        });
+      } else {
+        // Create new room
+        console.log('Creating new room with code:', roomCode);
+        roomId = await createRoom(roomCode, playerId, playerName, s);
+        if (!roomId) {
+          alert('Failed to create room. Please check your Supabase connection and try again.');
+          console.error('Room creation failed. Check browser console for details.');
+          return;
+        }
       }
 
       setCurrentRoomId(roomId);
