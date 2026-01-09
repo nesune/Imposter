@@ -1,0 +1,8 @@
+
+{
+  "name": "Imposter - Social Mystery Game",
+  "description": "A sleek, mobile-first social deduction game. Players are assigned secret words, but one is an imposter with a slightly different word or no word at all. Find the imposter before they blend in!",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
